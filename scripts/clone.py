@@ -16,6 +16,7 @@ def apply_alias(path: list[str], alias: dict[str, str]) -> list[str]:
         path[0] = alias[path[0]]
     return path
 
+
 # takes an absolute or relative url to a git repository
 # returns a standardized absolute path to repository
 def get_path(
@@ -53,6 +54,7 @@ def get_path(
 def print_path(path: list[str]) -> str:
     return "https://" + "/".join(path)
 
+
 # will clone git repo and open shell in the same directory
 def clone_and_cd(
     path: list[str],
@@ -80,7 +82,7 @@ if __name__ == "__main__":
         user=GIT_USER,
         alias=ALIAS,
     )
-    print("Repository "+"/".join(path))
+    print("Repository " + "/".join(path))
 
     clone_and_cd(
         path,
