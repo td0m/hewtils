@@ -35,8 +35,6 @@ def test_ssh():
 
 def test_bad_length():
     with raises(ValueError):
-        f("a/b/c/d")
-    with raises(ValueError):
         f("")
 
 
