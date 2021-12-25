@@ -4,77 +4,16 @@ from os.path import join
 from re import I
 from tempfile import mkdtemp
 from git import Repo
-from git.exc import GitCommandError
-import json
 
-import git
-from git.objects.commit import Commit
 from git.refs.remote import RemoteReference
+
+from scripts.watsgit import RepoStatus, status
 
 DISPOSABLE_GIT_REMOTE = "https://github.com/td0m/hewtils-test"
 
 temp_dir = mkdtemp()
 
 logger = logging.getLogger(__name__)
-
-
-class RepoStatus:
-    def __init__(
-        self,
-        untracked: list[str],
-        staged: list[str] = [],
-        unstaged: list[str] = [],
-        branches: dict[str, (str, str)] = {},
-        noremote: list[str] = [],
-    ):
-        self.untracked = untracked
-        self.staged = staged
-        self.unstaged = unstaged
-        self.branches = branches
-        self.noremote = noremote
-
-    def __eq__(self, other):
-        if not isinstance(self, other.__class__):
-            return False
-        return self.__dict__ == other.__dict__
-
-def status(repo: Repo) -> RepoStatus:
-    untracked = repo._get_untracked_files()
-
-    unstaged: list[git.Diff] = repo.index.diff(None)
-    staged: list[git.Diff] = repo.head.commit.diff()
-
-    has_remote: dict[str, bool] = {}
-    for ref in repo.references:
-        if isinstance(ref, git.RemoteReference):
-            has_remote[ref.remote_head] = True
-
-    branches = {}
-    for head in repo.branches:
-        branch = head.name
-        unpushed, unpulled = commit_diff(repo, branch)
-        branches[branch] = (branch in has_remote, unpushed, unpulled)
-
-    return RepoStatus(
-        untracked=untracked,
-        staged=[d.b_path for d in staged],
-        unstaged=[d.b_path for d in unstaged],
-        branches=branches,
-    )
-
-
-def commit_diff(repo: Repo, branch: str) -> tuple[list[Commit], list[Commit]]:
-    diff = lambda unpulled: [
-        r.binsha.hex()
-        for r in repo.iter_commits(
-            f"{branch}@{{u}}..{branch}" if not unpulled else f"{branch}..{branch}@{{u}}"
-        )
-    ]
-    try:
-        return diff(False), diff(True)
-    except GitCommandError as e:
-        logging.warning(e.stderr)
-        return [], []
 
 def make_repo(full_path: str) -> Repo:
     os.makedirs(full_path)

@@ -2,16 +2,14 @@
 import os
 from git import Repo
 from argparse import ArgumentParser, BooleanOptionalAction
-import json
+import git
+from git.exc import GitCommandError
+from git.objects.commit import Commit
 
 from git.refs.remote import RemoteReference
 
-from scripts.clone import get_path, print_path
-
-# TODO: run on all branches
-# TODO: test
 # TODO: auto fix "no upstream URL" by using url convention and passing "--fix-upstream"
-# TODO: auto push changes by passing "--push"
+
 
 class bcolors:
     HEADER = "\033[95m"
@@ -25,6 +23,66 @@ class bcolors:
     UNDERLINE = "\033[4m"
 
 
+class RepoStatus:
+    def __init__(
+        self,
+        untracked: list[str],
+        staged: list[str] = [],
+        unstaged: list[str] = [],
+        branches: dict[str, (bool, str, str)] = {},
+    ):
+        self.untracked = untracked
+        self.staged = staged
+        self.unstaged = unstaged
+        self.branches = branches
+
+    def __eq__(self, other):
+        if not isinstance(self, other.__class__):
+            return False
+        return self.__dict__ == other.__dict__
+
+    def __repr__(self):
+        return f"{len(self.untracked)}"
+
+
+def status(repo: Repo) -> RepoStatus:
+    untracked = repo._get_untracked_files()
+
+    unstaged: list[git.Diff] = repo.index.diff(None)
+    staged: list[git.Diff] = repo.head.commit.diff()
+
+    has_remote: dict[str, bool] = {}
+    for ref in repo.references:
+        if isinstance(ref, git.RemoteReference):
+            has_remote[ref.remote_head] = True
+
+    branches = {}
+    for head in repo.branches:
+        branch = head.name
+        unpushed, unpulled = commit_diff(repo, branch)
+        branches[branch] = (branch in has_remote, unpushed, unpulled)
+
+    return RepoStatus(
+        untracked=untracked,
+        staged=[d.b_path for d in staged],
+        unstaged=[d.b_path for d in unstaged],
+        branches=branches,
+    )
+
+
+def commit_diff(repo: Repo, branch: str) -> tuple[list[Commit], list[Commit]]:
+    diff = lambda unpulled: [
+        r.binsha.hex()
+        for r in repo.iter_commits(
+            f"{branch}@{{u}}..{branch}" if not unpulled else f"{branch}..{branch}@{{u}}"
+        )
+    ]
+    try:
+        return diff(False), diff(True)
+    except GitCommandError as e:
+        return [], []
+
+
 # recurisvely visit directories until we find a git repo
 def visit_dir(prefix: str, path: str = "", **kwargs):
     if len(path) == 0:
@@ -32,96 +90,45 @@ def visit_dir(prefix: str, path: str = "", **kwargs):
 
     if os.path.isdir(path):
         if os.path.exists(os.path.join(path, ".git")):
-
-            statuses = list(git_status(prefix, path, **kwargs))
-            if len(statuses) > 0:
-                print(f"{bcolors.BOLD}{path[len(prefix)+1:]}{bcolors.ENDC}")
-                for msg in statuses:
-                    print(f"  {msg}{bcolors.ENDC}")
+            lines = list(git_status(prefix, path, **kwargs))
+            if len(lines) > 0:
+                print(path[len(prefix) + 1 :])
+                for line in lines:
+                    print("  " + line)
                 print()
-
             return
         for subdir in os.listdir(path):
             visit_dir(prefix, os.path.join(path, subdir), **kwargs)
 
 
-def push_f(repo, branch):
-    infos = repo.remotes.origin.push()
-    for info in infos:
-        yield bcolors.OKGREEN + f"Pushed '{branch}' to '{info.remote_ref}'"
+def c(l: list) -> str:
+    return "s" if len(l) > 1 else ""
 
-def git_status(
-    prefix: str, path: str, push: bool = False, debug: bool = False, add_remote=False
-):
+
+def git_status(prefix: str, path: str):
+    warn = lambda msg: bcolors.WARNING + msg + bcolors.ENDC
+    err = lambda msg: bcolors.FAIL + msg + bcolors.ENDC
+
     repo = Repo(path)
-    pathlist = get_path(path[len(prefix)+1:])
+    info = status(repo)
 
-    if repo.is_dirty(untracked_files=True):
-        # TODO: include number of changes in the message
-        yield f"{bcolors.WARNING}Untracked/uncommitted changes"
-
-    branch = repo.active_branch
-    pbranch = f"'{branch}'"
-
-    unpushed = []
-    unpulled = []
-    try:
-        unpushed = list(repo.iter_commits(f"{branch}@{{u}}..{branch}"))
-        unpulled = list(repo.iter_commits(f"{branch}..{branch}@{{u}}"))
-    except Exception as e:
-        err: str = e.args[-1].decode("utf-8")
-        if err.startswith("fatal: bad revision"):
-            if push:
-                yield from push_f(repo, branch)
-            else:
-                yield bcolors.FAIL + f"Upstream of branch {pbranch} has no commits."
-        elif err.startswith("fatal: no such branch:"):
-            yield bcolors.FAIL + f"No branch {pbranch}."
-        elif err.startswith("fatal: no upstream configured"):
-            if add_remote:
-                v = print_path(pathlist)
-                remote_name = "origin"
-                #repo.create_remote(remote_name, v)
-                rem_ref = RemoteReference(repo, f"refs/remotes/{remote_name}/{branch}")
-                repo.head.reference.set_tracking_branch(rem_ref)
-                yield bcolors.OKCYAN + f"Adding remote {v}..."
-            else:
-                yield bcolors.FAIL + f"No upstream remote configured for branch {pbranch}."
-                yield "  '--add-remote' will add one automatically for you."
-        if debug:
-            for arg in e.args[:-1]:
-                yield str(arg)
-            yield bcolors.FAIL + err
-        return
-
-    if len(unpushed) > 0:
-        if push:
-            yield from push_f(repo, branch)
-        else:
-            yield bcolors.WARNING + f"Unpushed changes on {pbranch}"
-
-    if len(unpulled) > 0:
-        yield bcolors.OKCYAN + f"Unpulled changes from {pbranch}"
-    return
-
+    if info.untracked:
+        yield warn(f"{len(info.untracked)} untracked file{c(info.untracked)}")
+    if info.unstaged:
+        yield warn(f"{len(info.unstaged)} unstaged file{c(info.unstaged)}")
+    if info.staged:
+        yield warn(f"{len(info.staged)} staged file{c(info.staged)}")
+    if info.branches:
+        for branch, (has_remote, unpushed, unpulled) in info.branches.items():
+            if not has_remote:
+                yield err(f"{branch}: no remote")
+            if unpushed:
+                yield warn(f"{branch}: {len(unpushed)} unpushed commit{c(unpushed)}")
+            if unpulled:
+                yield warn(f"{branch}: {len(unpulled)} unpulled commit{c(unpulled)}")
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Git status for multiple directories")
-    parser.add_argument(
-        "-p", "--push", help="auto push changes", action=BooleanOptionalAction
-    )
-    parser.add_argument(
-        "--add-remote",
-        help="automatically add remote if missing",
-        action=BooleanOptionalAction,
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        help="enable some extra debug logs",
-        action=BooleanOptionalAction,
-    )
-
     args = parser.parse_args()
 
-    visit_dir("/home/dom/Git", push=args.push, debug=args.verbose, add_remote=args.add_remote)
+    visit_dir("/home/dom/Git")
