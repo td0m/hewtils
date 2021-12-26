@@ -7,9 +7,9 @@ from git import Repo
 
 from git.refs.remote import RemoteReference
 
-from scripts.watsgit import RepoStatus, status
+from watsgit import RepoStatus, status
 
-DISPOSABLE_GIT_REMOTE = "https://github.com/td0m/hewtils-test"
+DISPOSABLE_GIT_REMOTE = "ssh://git@github.com/td0m/hewtils-test.git"
 
 temp_dir = mkdtemp()
 
