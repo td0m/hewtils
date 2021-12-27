@@ -51,21 +51,25 @@ def get_path(
     return apply_alias([domain, user][: 3 - len(path)] + path, alias)
 
 
-def print_path(path: list[str]) -> str:
-    return "https://" + "/".join(path)
+def print_path(path: list[str], http: bool = True) -> str:
+    if http:
+        return "https://" + "/".join(path)
+    domain, org, repo = path
+    return f"ssh://git@{domain}/{org}/{repo}"
 
 
 # will clone git repo and open shell in the same directory
 def clone_and_cd(
     path: list[str],
     base_dir: str = "./git",
+    http: bool = False,
 ):
     directory = os.path.join(base_dir, path[0], path[1])
     # make and cd to directory
     os.makedirs(directory, exist_ok=True)
     os.chdir(directory)
     # clone repository
-    os.system(f"git clone {print_path(path)}")
+    os.system(f"git clone {print_path(path, http=http)}")
     # open directory and start a shell in it
     os.chdir(path[2])
     os.system("$SHELL")
@@ -74,6 +78,7 @@ def clone_and_cd(
 if __name__ == "__main__":
     parser = ArgumentParser(description="clone git repos. faster. better.")
     parser.add_argument("url", type=str, help="url of the git repo.")
+    parser.add_argument("--http", "-H", action=BooleanOptionalAction)
     args = parser.parse_args()
 
     path = get_path(
@@ -87,4 +92,5 @@ if __name__ == "__main__":
     clone_and_cd(
         path,
         base_dir=BASE_DIR,
+        http=args.http,
     )
